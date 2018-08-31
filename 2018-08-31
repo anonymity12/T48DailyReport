@@ -1,0 +1,127 @@
+# 2018-08-31
+
+[TOC]
+
+# 针对昨天的仅仅有lldp报文
+
+路由口没有地址学习能力吗？
+
+## 情景复现
+
+ICMP报文的设定如下：
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/687164.jpg)
+
+从发包机的7口发送到5口 ，aka 从交换机的1口发送到2口，但是我们发现交换机接收到这个报文后，会在2口进行发送的是一个lldp报文（ps：也可能在其他down的口发送这个lldp）
+
+LLDP报文如下：
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/38695505.jpg)
+
+我们奇怪的就是为何没有转发那个ICMP报文，而是发送这个LLDP报文？
+
+或许是因为交换机，它不知道目的ip`2.0.0.2`在哪里，因为发包机不会自动发送arp的回应包。
+
+### 一个可能的solution
+
+我们手动添加一下：
+
+1. arp表：指定 ip 和mac 有对应关系，这是交换机的路由（L3）需要的
+2. mac表： 指定mac 和port 有对应的关系，这是交换机的交换（L2）的功能需要的。
+
+失败了
+
+设置的代码如下：
+
+```
+zrtlimt(config)#mac-address-table static 0000.0022.2222 vlan 1 interface gigabitEthernet 0/2
+Set static address failed
+```
+
+原因是路由口，你不能绑定mac和端口的对应关系，因为路由口不在意这个对应关系啊。
+
+从下图也可以看到，路由口不学习mac地址：
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/32361369.jpg)
+
+
+路由口是否在意arp的绑定呢？使用如下命令：进行IP和mac的绑定
+
+```
+address-bind 2.0.0.2 0000.0022.2222 /* 2.0.0.2（ip也） 0000.0022.2222（mac也）*/ 
+
+```
+
+- 备注：发包机很容易出现连不上的问题， 无法进行抓包，说资源不足。
+
+#### 实验结果1：
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/3653712.jpg)
+
+
+我们用wireshark抓的也就是7口的包。
+
+#### 实验结果2：
+
+我们对交换机设置如下：
+
+```
+zrtlimt(config)#address-bind 1.0.0.2 0000.0000.1111 /*绑定7口 的ip/mac地址*/
+```
+
+我们现在对7口的包设置如下，然后开始令7口发包
+
+但是抓到5口的消息仍旧是LLDP!!如下，交换机一直发一个mac目的为0x0180c200000e的LLDP报文给发包机的port5
+
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/54149091.jpg)
+
+#### 对两次实验中疑惑的一个解释
+
+看图：
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/99667752.jpg)
+
+请学习设置静态arp就好了。
+
+#### 如何设置静态arp呢？
+
+```
+
+arp ip-address mac-address arp-type(一般是arpa)
+
+```
+
+#### 设置好了静态arp继续实验
+
+首先认为：产生我们期望作用的是下面arp开头的两行
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/89634607.jpg)
+
+5口抓包还是仅仅LLDP报文
+
+#### 终于通了
+
+by图中所述：
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/19736564.jpg)
+
+# 从解决仅有lldp报文中，所学习到的
+
+正确理解2层的转发需要的是交换机（路由，网关）的mac
+
+# 继续验证l3的sdk的内容
+
+arp表的真正实现是在芯片的L3table， 如下
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/81099345.jpg)
+
+## 无法验证的内容：下一跳drop
+
+sdk.0> mod ing_l3_next_hop 3 2 DROP=1 
+
+仍旧会在5口看到和7口等同的流量：
+
+![](http://o6qns6y6x.bkt.clouddn.com/18-8-31/57888087.jpg)
+
+### 原因可能是我们还是不能理解这个ing_l3_next_hop表的意义
