@@ -1,6 +1,6 @@
 # SVI验证最终版.md
 
-![] (http://o6qns6y6x.bkt.clouddn.com/18-9-10/69487229.jpg)
+![](http://o6qns6y6x.bkt.clouddn.com/18-9-10/69487229.jpg)
 
 # PC1 出口方向
 
